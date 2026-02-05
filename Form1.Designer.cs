@@ -1,4 +1,5 @@
-﻿namespace spacewar
+﻿
+namespace spacewar
 {
     partial class Form1
     {
@@ -28,19 +29,79 @@
         /// </summary>
         private void InitializeComponent()
         {
+            components = new System.ComponentModel.Container();
+            System.ComponentModel.ComponentResourceManager resources = new System.ComponentModel.ComponentResourceManager(typeof(Form1));
+            MoveBgTimer = new System.Windows.Forms.Timer(components);
+            Player = new PictureBox();
+            LeftMoveTimer = new System.Windows.Forms.Timer(components);
+            RightMoveTimer = new System.Windows.Forms.Timer(components);
+            UpMoveTimer = new System.Windows.Forms.Timer(components);
+            DownMoveTimer = new System.Windows.Forms.Timer(components);
+            ((System.ComponentModel.ISupportInitialize)Player).BeginInit();
             SuspendLayout();
+            // 
+            // MoveBgTimer
+            // 
+            MoveBgTimer.Enabled = true;
+            MoveBgTimer.Interval = 10;
+            MoveBgTimer.Tick += MoveBgTimer_Tick;
+            // 
+            // Player
+            // 
+            Player.BackColor = Color.Transparent;
+            Player.Image = (Image)resources.GetObject("Player.Image");
+            Player.Location = new Point(260, 400);
+            Player.Name = "Player";
+            Player.Size = new Size(50, 50);
+            Player.SizeMode = PictureBoxSizeMode.Zoom;
+            Player.TabIndex = 0;
+            Player.TabStop = false;
+            // 
+            // LeftMoveTimer
+            // 
+            LeftMoveTimer.Interval = 5;
+            LeftMoveTimer.Tick += LeftMoveTimer_Tick;
+            // 
+            // RightMoveTimer
+            // 
+            RightMoveTimer.Interval = 5;
+            RightMoveTimer.Tick += RightMoveTimer_Tick;
+            // 
+            // UpMoveTimer
+            // 
+            UpMoveTimer.Interval = 5;
+            UpMoveTimer.Tick += UpMoveTimer_Tick;
+            // 
+            // DownMoveTimer
+            // 
+            DownMoveTimer.Interval = 5;
+            DownMoveTimer.Tick += DownMoveTimer_Tick;
             // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
             AutoScaleMode = AutoScaleMode.Font;
-            ClientSize = new Size(736, 450);
+            BackColor = SystemColors.HotTrack;
+            ClientSize = new Size(584, 461);
+            Controls.Add(Player);
+            Icon = (Icon)resources.GetObject("$this.Icon");
+            MaximumSize = new Size(600, 500);
             Name = "Form1";
-            Text = "Form1";
+            Text = "Spacewar";
             Load += Form1_Load;
+            KeyDown += Form1_KeyDown;
+            KeyUp += Form1_KeyUp;
+            ((System.ComponentModel.ISupportInitialize)Player).EndInit();
             ResumeLayout(false);
         }
 
         #endregion
+
+        private System.Windows.Forms.Timer MoveBgTimer;
+        private PictureBox Player;
+        private System.Windows.Forms.Timer LeftMoveTimer;
+        private System.Windows.Forms.Timer RightMoveTimer;
+        private System.Windows.Forms.Timer UpMoveTimer;
+        private System.Windows.Forms.Timer DownMoveTimer;
     }
 }
