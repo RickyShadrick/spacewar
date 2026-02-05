@@ -37,6 +37,7 @@ namespace spacewar
             RightMoveTimer = new System.Windows.Forms.Timer(components);
             UpMoveTimer = new System.Windows.Forms.Timer(components);
             DownMoveTimer = new System.Windows.Forms.Timer(components);
+            MoveMunitionTimer = new System.Windows.Forms.Timer(components);
             ((System.ComponentModel.ISupportInitialize)Player).BeginInit();
             SuspendLayout();
             // 
@@ -77,6 +78,12 @@ namespace spacewar
             DownMoveTimer.Interval = 5;
             DownMoveTimer.Tick += DownMoveTimer_Tick;
             // 
+            // MoveMunitionTimer
+            // 
+            MoveMunitionTimer.Enabled = true;
+            MoveMunitionTimer.Interval = 20;
+            MoveMunitionTimer.Tick += MoveMunitionTimer_Tick;
+            // 
             // Form1
             // 
             AutoScaleDimensions = new SizeF(7F, 15F);
@@ -103,5 +110,6 @@ namespace spacewar
         private System.Windows.Forms.Timer RightMoveTimer;
         private System.Windows.Forms.Timer UpMoveTimer;
         private System.Windows.Forms.Timer DownMoveTimer;
+        private System.Windows.Forms.Timer MoveMunitionTimer;
     }
 }
