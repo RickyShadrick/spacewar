@@ -1,9 +1,5 @@
 using spacewar;
 using WMPLib;
-
-
-using spacewar;
-using WMPLib;
 using System.ComponentModel;
 using System.Data;
 using System.Drawing;
@@ -16,7 +12,6 @@ using System.Collections.Generic;
 
 namespace spacewar
 {
-
     public partial class Form1 : Form
     {
         WindowsMediaPlayer gameMedia;
@@ -25,7 +20,7 @@ namespace spacewar
 
         PictureBox[] stars;
         PictureBox[] munitions;
-        List<PictureBox> enemies = new();
+        List<Enemy> enemies = new();
         List<PictureBox> enemyBullets = new();
 
         int MunitionSpeed;
@@ -33,6 +28,12 @@ namespace spacewar
         Random rnd;
         PictureBox player;
         int playerSpeed;
+
+        // player lives
+        private int playerLives = 3;
+        private Label livesLabel;
+        private bool invulnerable = false;
+        private int invulnerableTicks = 0;
 
         // Added: keep the loaded image as a field so we can reuse and dispose it
         private Image? munitionImage;
@@ -45,9 +46,15 @@ namespace spacewar
         private int score = 0;
         private int level = 1;
         private int enemiesKilledThisLevel = 0;
-        private bool starActive = false;
-        private PictureBox? starPowerup = null;
+        private bool starActive = false; // boss-star active
+        private PictureBox? starPowerup = null; // boss-star
         private int bossesRemaining = 0;
+
+        // life-star state
+        private bool lifeStarActive = false;
+        private PictureBox? lifeStarPowerup = null;
+        private int totalKills = 0;
+        private int nextLifeThreshold = 50;
 
         // Wave-based spawner state
         private int waveNumber = 0;
@@ -58,6 +65,7 @@ namespace spacewar
             InitializeComponent();
             // register for disposal of loaded assets
             this.FormClosed += Form1_FormClosed;
+            this.KeyPreview = true; // allow form to receive key events even if controls have focus
         }
 
         //initialize game elements
@@ -156,7 +164,7 @@ namespace spacewar
                 }
             }
 
-            // load star image if present
+            // load star image if present (used for boss-star and life-star)
             string starPath = Path.Combine(assertsDir, "star.png");
             if (File.Exists(starPath))
             {
@@ -190,8 +198,17 @@ namespace spacewar
                 Location = new Point(8, 28),
                 Text = "Level: 1"
             };
+            livesLabel = new Label
+            {
+                AutoSize = true,
+                ForeColor = Color.Yellow,
+                BackColor = Color.Transparent,
+                Location = new Point(8, 48),
+                Text = $"Lives: {playerLives}"
+            };
             this.Controls.Add(scoreLabel);
             this.Controls.Add(levelLabel);
+            this.Controls.Add(livesLabel);
 
             // create munition boxes (hidden initially)
             for (int i = 0; i < munitions.Length; i++)
@@ -207,8 +224,8 @@ namespace spacewar
                 this.Controls.Add(munitions[i]);
             }
 
-            // create a small pool of enemy bullets
-            for (int i = 0; i < 12; i++)
+            // create a larger pool of enemy bullets
+            for (int i = 0; i < 30; i++)
             {
                 var b = new PictureBox
                 {
@@ -273,21 +290,31 @@ namespace spacewar
             try { boomMedia.controls.stop(); } catch { }
         }
 
-        // Spawn N enemies (normal). Boss flag not used here.
+        // Spawn N enemies (normal). Now creates Enemy objects with non-overlapping spawn
         private void SpawnEnemies(int count)
         {
+            int attemptsLimit = 30;
             for (int i = 0; i < count; i++)
             {
-                var e = new PictureBox
+                var type = (EnemyType)rnd.Next(0, 4); // Straight, Sine, Zigzag, Homing
+                var img = enemyImages[rnd.Next(enemyImages.Length)] ?? new Bitmap(40, 30);
+                Point start;
+                int attempts = 0;
+                do
                 {
-                    Size = new Size(40, 30),
-                    SizeMode = PictureBoxSizeMode.Zoom,
-                    Image = enemyImages[rnd.Next(enemyImages.Length)],
-                    Location = new Point(rnd.Next(10, Math.Max(60, this.ClientSize.Width - 50)), rnd.Next(-300, -30)),
-                    Tag = "enemy" // simple tag
-                };
-                enemies.Add(e);
-                this.Controls.Add(e);
+                    start = new Point(rnd.Next(10, Math.Max(60, this.ClientSize.Width - 50)), rnd.Next(-300, -30));
+                    attempts++;
+                }
+                while (attempts < attemptsLimit && enemies.Any(en => Rectangle.Intersect(new Rectangle(start, img.Size), en.Sprite.Bounds).Width > 0));
+
+                int health = 1 + level / 3;
+                float speed = 1f + (float)rnd.NextDouble() * 1.5f + level * 0.15f;
+
+                var en = new Enemy(type, img, start, health, speed, rnd, 10, this.ClientSize.Width - 60);
+                en.OnFire = Enemy_OnFire;
+                en.OnDestroyed = Enemy_OnDestroyed;
+                enemies.Add(en);
+                this.Controls.Add(en.Sprite);
             }
         }
 
@@ -299,28 +326,60 @@ namespace spacewar
             SpawnEnemies(enemyCount);
         }
 
-        // Spawn boss set after collecting star
+        // Spawn boss set after collecting boss-star
         private void SpawnBosses(int count)
         {
             bossesRemaining = count;
             for (int i = 0; i < count; i++)
             {
-                var b = new PictureBox
-                {
-                    Size = new Size(80, 60),
-                    SizeMode = PictureBoxSizeMode.Zoom,
-                    Image = enemyImages[rnd.Next(enemyImages.Length)], // reuse enemy art
-                    Location = new Point(60 + (i * 90) % Math.Max(1, (this.ClientSize.Width - 120)), -100 - i * 120),
-                    Tag = 5 + level // use Tag as health (boxed int)
-                };
-                enemies.Add(b);
-                this.Controls.Add(b);
+                var img = enemyImages[rnd.Next(enemyImages.Length)] ?? new Bitmap(80, 60);
+                var start = new Point(60 + (i * 90) % Math.Max(1, (this.ClientSize.Width - 120)), -100 - i * 120);
+                int health = 5 + level;
+                float speed = 0.8f + level * 0.05f;
+
+                var boss = new Enemy(EnemyType.Boss, img, start, health, speed, rnd, 10, this.ClientSize.Width - 60);
+                boss.OnFire = Enemy_OnFire;
+                boss.OnDestroyed = Enemy_OnDestroyed;
+                enemies.Add(boss);
+                this.Controls.Add(boss.Sprite);
             }
+        }
+
+        // Spawn life-star (gives +1 life)
+        private void SpawnLifeStarPowerup()
+        {
+            if (lifeStarActive) return;
+            lifeStarActive = true;
+            lifeStarPowerup = new PictureBox
+            {
+                Size = new Size(20, 20),
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Image = starImage,
+                Location = new Point(rnd.Next(40, Math.Max(60, this.ClientSize.Width - 40)), rnd.Next(40, this.ClientSize.Height / 2)),
+                Visible = true
+            };
+            this.Controls.Add(lifeStarPowerup);
         }
 
         //move background stars and all moving objects
         private void MoveBgTimer_Tick(object sender, EventArgs e)
         {
+            // update invulnerability
+            if (invulnerable)
+            {
+                invulnerableTicks--;
+                if (invulnerableTicks <= 0)
+                {
+                    invulnerable = false;
+                    Player.Visible = true;
+                }
+                else
+                {
+                    // blink player
+                    Player.Visible = (invulnerableTicks / 5) % 2 == 0;
+                }
+            }
+
             for (int i = 0; i < stars.Length / 2; i++)
             {
                 stars[i].Top += backgroundSpeed;
@@ -402,10 +461,10 @@ namespace spacewar
         //stop moving when key is released
         private void Form1_KeyUp(object sender, KeyEventArgs e)
         {
-            RightMoveTimer.Stop();
-            LeftMoveTimer.Stop();
-            DownMoveTimer.Stop();
-            UpMoveTimer.Stop();
+            if (e.KeyCode == Keys.Right) RightMoveTimer.Stop();
+            if (e.KeyCode == Keys.Left) LeftMoveTimer.Stop();
+            if (e.KeyCode == Keys.Down) DownMoveTimer.Stop();
+            if (e.KeyCode == Keys.Up) UpMoveTimer.Stop();
         }
 
 
@@ -424,54 +483,19 @@ namespace spacewar
                     {
                         var en = enemies[j];
                         if (en == null) continue;
-                        if (munitions[i].Bounds.IntersectsWith(en.Bounds) && munitions[i].Visible && en.Visible)
+                        if (munitions[i].Bounds.IntersectsWith(en.Sprite.Bounds) && munitions[i].Visible && en.Sprite.Visible)
                         {
                             // play boom (restart playback)
                             try { boomMedia.controls.stop(); boomMedia.controls.play(); } catch { }
 
-                            // check if boss (Tag is boxed int health)
-                            if (en.Tag is int health)
-                            {
-                                health -= 1;
-                                en.Tag = health;
-                                // destroy the munition
-                                munitions[i].Visible = false;
-                                munitions[i].Location = new Point(-100, -100);
+                            // damage enemy
+                            en.Damage(1);
 
-                                if (health <= 0)
-                                {
-                                    // boss defeated
-                                    enemies.RemoveAt(j);
-                                    this.Controls.Remove(en);
-                                    en.Dispose();
-                                    bossesRemaining--;
-                                    score += 10 * level;
-                                    scoreLabel.Text = $"Score: {score}";
-                                }
-                            }
-                            else
-                            {
-                                // normal enemy: remove
-                                enemies.RemoveAt(j);
-                                this.Controls.Remove(en);
-                                en.Dispose();
+                            // destroy the munition
+                            munitions[i].Visible = false;
+                            munitions[i].Location = new Point(-100, -100);
 
-                                munitions[i].Visible = false;
-                                munitions[i].Location = new Point(-100, -100);
-
-                                score += 1;
-                                enemiesKilledThisLevel++;
-                                scoreLabel.Text = $"Score: {score}";
-
-                                // decrement wave counter (wave-based spawner)
-                                enemiesRemainingInWave = Math.Max(0, enemiesRemainingInWave - 1);
-                            }
-
-                            // check level objective
-                            if (!starActive && enemiesKilledThisLevel >= 30)
-                            {
-                                SpawnStarPowerup();
-                            }
+                            // If enemy is normal, update kill counters handled in OnDestroyed
 
                             break; // munition used up
                         }
@@ -486,73 +510,52 @@ namespace spacewar
                 }
             }
 
-            // move enemies and occasionally shoot
-            int enemySpeed = 1 + level / 2;
-            for (int i = enemies.Count - 1; i >= 0; i--)
-            {
-                var en = enemies[i];
-                if (en == null || !en.Visible) continue;
+            // update enemies (movement and off-screen handling)
+            UpdateEnemies();
 
-                // If en is a boss (Tag is int health), move slower upward-to-down or oscillate
-                if (en.Tag is int)
-                {
-                    // bosses move slower vertically, slight horizontal oscillation
-                    en.Top += Math.Max(1, enemySpeed - 1);
-                    en.Left += (int)(Math.Sin((DateTime.Now.Ticks / 500000 + i) % 10) * 1.5);
-                }
-                else
-                {
-                    en.Top += enemySpeed;
-                }
-
-                // wrap or respawn if off bottom (non-boss)
-                if (en.Top > this.ClientSize.Height + 50 && !(en.Tag is int))
-                {
-                    en.Location = new Point(rnd.Next(10, this.ClientSize.Width - en.Width), rnd.Next(-200, -30));
-                }
-
-                // enemy shooting: chance based on level
-                if (rnd.NextDouble() < 0.005 * level)
-                {
-                    FireEnemyBulletFrom(en);
-                }
-
-                // collision enemy with player (simple game over placeholder: deduct score)
-                if (en.Bounds.IntersectsWith(Player.Bounds))
-                {
-                    score = Math.Max(0, score - 5);
-                    scoreLabel.Text = $"Score: {score}";
-                    // push enemy away
-                    en.Location = new Point(rnd.Next(10, this.ClientSize.Width - en.Width), rnd.Next(-200, -30));
-                }
-            }
-
-            // move enemy bullets
+            // enemy bullets movement and collisions
+            int bulletSpeed = 4 + level; // scale bullet speed with level
             for (int i = 0; i < enemyBullets.Count; i++)
             {
                 var b = enemyBullets[i];
                 if (!b.Visible) continue;
-                b.Top += 4 + level; // faster each level
+                b.Top += bulletSpeed; // faster each level
 
-                if (b.Bounds.IntersectsWith(Player.Bounds))
+                if (!invulnerable && b.Bounds.IntersectsWith(Player.Bounds))
                 {
-                    // hit player - penalize a bit
-                    score = Math.Max(0, score - 2);
-                    scoreLabel.Text = $"Score: {score}";
+                    // hit player - lose a life
                     b.Visible = false;
                     b.Location = new Point(-100, -100);
+                    PlayerHit();
                 }
-                if (b.Top > this.ClientSize.Height)
+                else if (b.Top > this.ClientSize.Height)
                 {
                     b.Visible = false;
                     b.Location = new Point(-100, -100);
                 }
             }
 
-            // star powerup collision with player
+            // life-star collision with player
+            if (lifeStarActive && lifeStarPowerup != null && lifeStarPowerup.Visible && lifeStarPowerup.Bounds.IntersectsWith(Player.Bounds))
+            {
+                // collect life star -> grant life
+                lifeStarPowerup.Visible = false;
+                this.Controls.Remove(lifeStarPowerup);
+                lifeStarPowerup.Dispose();
+                lifeStarPowerup = null;
+                lifeStarActive = false;
+
+                playerLives++;
+                livesLabel.Text = $"Lives: {playerLives}";
+
+                // increase next threshold
+                nextLifeThreshold += 50;
+            }
+
+            // star powerup (boss-star) collision with player
             if (starActive && starPowerup != null && starPowerup.Visible && starPowerup.Bounds.IntersectsWith(Player.Bounds))
             {
-                // collect star -> spawn bosses
+                // collect boss-star -> spawn bosses
                 starPowerup.Visible = false;
                 this.Controls.Remove(starPowerup);
                 starPowerup.Dispose();
@@ -565,7 +568,7 @@ namespace spacewar
             }
 
             // wave progression: when wave cleared and no bosses active, start next wave
-            if (enemiesRemainingInWave == 0 && bossesRemaining == 0 && !starActive && enemies.All(e => !(e.Tag is int)))
+            if (enemiesRemainingInWave == 0 && bossesRemaining == 0 && !starActive && enemies.All(e => e.Type != EnemyType.Boss) && enemies.Count == 0)
             {
                 // next wave: increase wave count and spawn more enemies (scales with level and wave)
                 int nextWaveCount = 4 + level * 2 + waveNumber; // simple scaling
@@ -573,7 +576,7 @@ namespace spacewar
             }
 
             // if all bosses defeated and none active, advance level
-            if (bossesRemaining == 0 && enemiesKilledThisLevel >= 30 && enemies.All(e => !(e.Tag is int)))
+            if (bossesRemaining == 0 && enemiesKilledThisLevel >= 30 && enemies.All(e => e.Type != EnemyType.Boss))
             {
                 // level complete
                 level++;
@@ -611,16 +614,142 @@ namespace spacewar
             }
         }
 
-        // Fire an enemy bullet from an enemy picturebox (reuses pool)
-        private void FireEnemyBulletFrom(PictureBox enemy)
+        // Fire an enemy bullet from an enemy (reuses pool)
+        private void FireEnemyBulletFromEnemy(Enemy enemy)
         {
             var b = enemyBullets.FirstOrDefault(bb => !bb.Visible);
             if (b == null) return;
-            b.Location = new Point(enemy.Left + enemy.Width / 2 - b.Width / 2, enemy.Top + enemy.Height);
+            b.Location = new Point(enemy.Sprite.Left + enemy.Sprite.Width / 2 - b.Width / 2, enemy.Sprite.Top + enemy.Sprite.Height);
             b.Visible = true;
         }
 
-        // Spawn a star powerup somewhere on screen
+        // Enemy requested to fire
+        private void Enemy_OnFire(Enemy en)
+        {
+            FireEnemyBulletFromEnemy(en);
+        }
+
+        // Called when enemy reports destroyed
+        private void Enemy_OnDestroyed(Enemy en)
+        {
+            if (!enemies.Contains(en)) return;
+            bool isBoss = en.Type == EnemyType.Boss;
+
+            enemies.Remove(en);
+            try { this.Controls.Remove(en.Sprite); } catch { }
+            en.Dispose();
+
+            if (isBoss)
+            {
+                bossesRemaining = Math.Max(0, bossesRemaining - 1);
+                score += 10 * level;
+            }
+            else
+            {
+                enemiesKilledThisLevel++;
+                enemiesRemainingInWave = Math.Max(0, enemiesRemainingInWave - 1);
+                score += 1;
+
+                // increment cumulative kills and check life-star threshold
+                totalKills++;
+                if (!lifeStarActive && totalKills >= nextLifeThreshold)
+                {
+                    SpawnLifeStarPowerup();
+                }
+            }
+
+            scoreLabel.Text = $"Score: {score}";
+
+            if (!starActive && enemiesKilledThisLevel >= 30)
+            {
+                // spawn boss-star to trigger bosses collection (unchanged)
+                SpawnStarPowerup();
+            }
+        }
+
+        // Update enemies: movement, off-screen removal and player collisions
+        private void UpdateEnemies()
+        {
+            for (int i = enemies.Count - 1; i >= 0; i--)
+            {
+                var en = enemies[i];
+                en.Update(Player.Location, level);
+
+                // collision enemy with player
+                if (!invulnerable && en.Sprite.Bounds.IntersectsWith(Player.Bounds))
+                {
+                    // Determine if this enemy type is non-shooting -> instant kill/impact
+                    bool nonShooting = en.Type == EnemyType.Straight || en.Type == EnemyType.Sine || en.Type == EnemyType.Patrol;
+                    if (nonShooting)
+                    {
+                        // remove the enemy and kill player
+                        enemies.RemoveAt(i);
+                        try { this.Controls.Remove(en.Sprite); } catch { }
+                        en.Dispose();
+                        enemiesRemainingInWave = Math.Max(0, enemiesRemainingInWave - 1);
+
+                        PlayerHit();
+                        continue;
+                    }
+                    else
+                    {
+                        // for shooting enemies, penalize and push away (as earlier)
+                        score = Math.Max(0, score - 5);
+                        scoreLabel.Text = $"Score: {score}";
+                        en.Sprite.Location = new Point(rnd.Next(10, this.ClientSize.Width - en.Sprite.Width), rnd.Next(-200, -30));
+                    }
+                }
+
+                // remove if off-screen (for normal enemies)
+                if (en.Sprite.Top > this.ClientSize.Height + 60 && en.Type != EnemyType.Boss)
+                {
+                    enemies.RemoveAt(i);
+                    try { this.Controls.Remove(en.Sprite); } catch { }
+                    en.Dispose();
+                    enemiesRemainingInWave = Math.Max(0, enemiesRemainingInWave - 1);
+                }
+            }
+        }
+
+        // handle player hit
+        private void PlayerHit()
+        {
+            if (invulnerable) return;
+            playerLives--;
+            livesLabel.Text = $"Lives: {playerLives}";
+
+            try { boomMedia.controls.stop(); boomMedia.controls.play(); } catch { }
+
+            if (playerLives <= 0)
+            {
+                GameOver();
+                return;
+            }
+
+            // respawn player and make invulnerable for a short time
+            Player.Location = new Point(260, 400);
+            invulnerable = true;
+            invulnerableTicks = 80; // about 1.6s at 20ms tick
+        }
+
+        private void GameOver()
+        {
+            // stop timers
+            MoveBgTimer.Stop();
+            LeftMoveTimer.Stop();
+            RightMoveTimer.Stop();
+            UpMoveTimer.Stop();
+            DownMoveTimer.Stop();
+            MoveMunitionTimer.Stop();
+            // stop music
+            try { gameMedia.controls.stop(); } catch { }
+
+            MessageBox.Show($"Game Over\nScore: {score}", "Game Over", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            // restart simple: close
+            this.Close();
+        }
+
+        // Spawn a star powerup somewhere on screen (boss-star)
         private void SpawnStarPowerup()
         {
             if (starActive) return;
@@ -630,7 +759,7 @@ namespace spacewar
                 Size = new Size(20, 20),
                 SizeMode = PictureBoxSizeMode.Zoom,
                 Image = starImage,
-                Location = new Point(rnd.Next(40, this.ClientSize.Width - 40), rnd.Next(40, this.ClientSize.Height / 2)),
+                Location = new Point(rnd.Next(40, Math.Max(60, this.ClientSize.Width - 40)), rnd.Next(40, this.ClientSize.Height / 2)),
                 Visible = true
             };
             this.Controls.Add(starPowerup);
